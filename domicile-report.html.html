@@ -1,0 +1,793 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Physical Inventory Domicile Report v1.2</title>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+</head>
+<body style="margin:0;padding:20px;font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;background-color:#f8fafc;color:#1e293b;">
+
+  <!-- Header Banner -->
+  <div style="background:linear-gradient(135deg, #1e293b 0%, #0f172a 100%);color:#ffffff;padding:24px;border-radius:12px;margin-bottom:20px;box-shadow:0 4px 6px -1px rgba(0,0,0,0.1);">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:16px;">
+      <div>
+        <h1 style="margin:0;font-size:24px;font-weight:700;letter-spacing:-0.025em;color:#ffffff;">Physical Inventory Domicile Tool v1.2</h1>
+        <p style="margin:6px 0 0 0;font-size:14px;color:#94a3b8;">Fleet Domicile &amp; Dwell Location Analysis for Regional Managers</p>
+      </div>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;">
+        <button id="btn-export" onclick="exportToCSV()" style="background:#2563eb;color:#ffffff;border:none;padding:10px 18px;border-radius:6px;font-weight:600;font-size:13px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;">
+          <span>📥 Export CSV Report</span>
+        </button>
+        <span id="support-contact" style="font-size:12px;color:#cbd5e1;">Support: fleet-support@example.com</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- API Warning Notification (Hidden by default) -->
+  <div id="warning-banner" style="display:none;background-color:#fffbebe6;border:1px solid #f59e0b;border-left:5px solid #d97706;padding:14px 18px;border-radius:8px;margin-bottom:20px;color:#92400e;font-size:13px;">
+    <strong>⚠️ API Data Limit Reached (50,000 Trips Cap):</strong> Your query reached the maximum API response limit. For large fleets (150+ vehicles), please filter by a specific <strong>Vehicle Group / Region</strong> or select a shorter lookback window to prevent trip truncation.
+  </div>
+
+  <!-- Filter & Controls Toolbar -->
+  <div style="background:#ffffff;padding:20px;border-radius:10px;margin-bottom:20px;border:1px solid #e2e8f0;box-shadow:0 1px 3px rgba(0,0,0,0.05);">
+    <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end;">
+      <div style="flex:1;min-width:180px;">
+        <label style="display:block;font-size:12px;font-weight:700;color:#475569;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.05em;">Date Range (Lookback)</label>
+        <select id="select-lookback" style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px;color:#1e293b;background-color:#ffffff;">
+          <option value="90" selected>Last 3 Months (90 Days)</option>
+          <option value="30">Last 1 Month (30 Days)</option>
+          <option value="180">Last 6 Months (180 Days)</option>
+          <option value="365">Last 1 Year (365 Days)</option>
+        </select>
+      </div>
+
+      <div style="flex:1;min-width:180px;">
+        <label style="display:block;font-size:12px;font-weight:700;color:#475569;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.05em;">Vehicle Group / Region</label>
+        <select id="select-group" style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px;color:#1e293b;background-color:#ffffff;">
+          <option value="ALL">-- All Regional Groups --</option>
+        </select>
+      </div>
+
+      <div style="flex:1;min-width:180px;">
+        <label style="display:block;font-size:12px;font-weight:700;color:#475569;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.05em;">Geographic Boundary</label>
+        <select id="select-state-filter" style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px;color:#1e293b;background-color:#ffffff;">
+          <option value="CO_ONLY" selected>Colorado Only</option>
+          <option value="ALL">All Locations / Unlimited</option>
+        </select>
+      </div>
+
+      <div style="flex:1;min-width:180px;">
+        <label style="display:block;font-size:12px;font-weight:700;color:#475569;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.05em;">Search Vehicle / Location</label>
+        <input type="text" id="input-search" placeholder="Filter results..." onkeyup="filterTable()" style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px;color:#1e293b;box-sizing:border-box;">
+      </div>
+
+      <div>
+        <button id="btn-run" onclick="runReport()" style="background:#0f172a;color:#ffffff;border:none;padding:11px 22px;border-radius:6px;font-weight:600;font-size:14px;cursor:pointer;">
+          ▶ Run Analysis
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- KPI Cards -->
+  <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(200px, 1fr));gap:16px;margin-bottom:20px;">
+    <div style="background:#ffffff;padding:16px;border-radius:8px;border:1px solid #e2e8f0;border-left:4px solid #2563eb;">
+      <div style="font-size:12px;font-weight:600;color:#64748b;text-transform:uppercase;">Active Fleet Vehicles</div>
+      <div id="kpi-total-vehicles" style="font-size:28px;font-weight:700;color:#0f172a;margin-top:4px;">0</div>
+    </div>
+    <div style="background:#ffffff;padding:16px;border-radius:8px;border:1px solid #e2e8f0;border-left:4px solid #16a34a;">
+      <div style="font-size:12px;font-weight:600;color:#64748b;text-transform:uppercase;">Vehicles with Dwell Match</div>
+      <div id="kpi-dwell-count" style="font-size:28px;font-weight:700;color:#0f172a;margin-top:4px;">0</div>
+    </div>
+    <div style="background:#ffffff;padding:16px;border-radius:8px;border:1px solid #e2e8f0;border-left:4px solid #d97706;">
+      <div style="font-size:12px;font-weight:600;color:#64748b;text-transform:uppercase;">Trips Evaluated</div>
+      <div id="kpi-trips-count" style="font-size:28px;font-weight:700;color:#0f172a;margin-top:4px;">0</div>
+    </div>
+    <div style="background:#ffffff;padding:16px;border-radius:8px;border:1px solid #e2e8f0;border-left:4px solid #9333ea;">
+      <div style="font-size:12px;font-weight:600;color:#64748b;text-transform:uppercase;">Out-of-Bounds Excluded</div>
+      <div id="kpi-excluded-count" style="font-size:28px;font-weight:700;color:#0f172a;margin-top:4px;">0</div>
+    </div>
+  </div>
+
+  <!-- Leaflet Domicile Location Map -->
+  <div style="background:#ffffff;border-radius:10px;border:1px solid #e2e8f0;padding:16px;margin-bottom:20px;box-shadow:0 1px 3px rgba(0,0,0,0.05);">
+    <div id="map" style="height:380px;width:100%;border-radius:8px;border:1px solid #cbd5e1;background:#e2e8f0;"></div>
+  </div>
+
+  <!-- Navigation View Tabs -->
+  <div style="display:flex;gap:8px;margin-bottom:16px;border-bottom:2px solid #e2e8f0;padding-bottom:2px;">
+    <button id="tab-btn-all" onclick="switchTab('all')" style="background:#2563eb;color:#ffffff;border:none;padding:8px 16px;border-radius:6px 6px 0 0;font-weight:600;font-size:13px;cursor:pointer;">
+      Comprehensive Matrix
+    </button>
+    <button id="tab-btn-time" onclick="switchTab('time')" style="background:#f1f5f9;color:#475569;border:none;padding:8px 16px;border-radius:6px 6px 0 0;font-weight:600;font-size:13px;cursor:pointer;">
+      Longest Dwell Duration
+    </button>
+    <button id="tab-btn-stops" onclick="switchTab('stops')" style="background:#f1f5f9;color:#475569;border:none;padding:8px 16px;border-radius:6px 6px 0 0;font-weight:600;font-size:13px;cursor:pointer;">
+      Most Frequent Stops
+    </button>
+    <button id="tab-btn-last" onclick="switchTab('last')" style="background:#f1f5f9;color:#475569;border:none;padding:8px 16px;border-radius:6px 6px 0 0;font-weight:600;font-size:13px;cursor:pointer;">
+      Last Recorded Location
+    </button>
+  </div>
+
+  <!-- Main Data Container -->
+  <div style="background:#ffffff;border-radius:10px;border:1px solid #e2e8f0;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.05);">
+    <div id="loading-indicator" style="display:none;padding:40px;text-align:center;color:#64748b;">
+      <div style="font-size:18px;font-weight:600;margin-bottom:8px;">Analyzing Batch Trip Data...</div>
+      <div style="font-size:13px;">Processing vehicle trips and aggregating dwell locations. Please wait...</div>
+    </div>
+
+    <div id="empty-indicator" style="display:block;padding:40px;text-align:center;color:#64748b;">
+      <div style="font-size:16px;font-weight:600;margin-bottom:6px;">Ready to run Physical Inventory Report</div>
+      <div style="font-size:13px;">Select your desired filters above and click "Run Analysis".</div>
+    </div>
+
+    <div id="table-wrapper" style="display:none;overflow-x:auto;">
+      <table id="inventory-table" style="width:100%;border-collapse:collapse;text-align:left;font-size:13px;color:#1e293b;">
+        <thead id="table-head" style="background-color:#f8fafc;border-bottom:2px solid #e2e8f0;font-weight:700;color:#475569;">
+          <!-- Dynamic Table Headers -->
+        </thead>
+        <tbody id="table-body">
+          <!-- Dynamic Data Rows -->
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Debug Footer -->
+  <div id="debug-toggle" style="position:fixed;bottom:0;left:0;right:0;text-align:center;z-index:9999;">
+    <button onclick="var d=document.getElementById('debug-log');d.style.display=d.style.display==='none'?'block':'none';" style="background:#e74c3c;color:#fff;border:none;padding:4px 16px;cursor:pointer;font-size:12px;border-radius:4px 4px 0 0;">Toggle Debug Log</button>
+    <button onclick="copyDebugData()" style="background:#f39c12;color:#fff;border:none;padding:4px 16px;cursor:pointer;font-size:12px;border-radius:4px 4px 0 0;margin-left:4px;">Copy Debug Data</button>
+    <pre id="debug-log" style="display:none;background:#1e1e1e;color:#0f0;padding:10px;margin:0;max-height:200px;overflow-y:auto;text-align:left;font-size:11px;"></pre>
+  </div>
+
+  <script>
+    // Dynamically Load CSS Assets
+    var linkLf = document.createElement('link');
+    linkLf.rel = 'stylesheet';
+    linkLf.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+    document.head.appendChild(linkLf);
+
+    // Global Variables
+    var _debugData = {};
+    var _geotabApi = null;
+    var _map = null;
+    var _markersGroup = null;
+    var _allDevices = [];
+    var _groupsMap = {};
+    var _reportData = [];
+    var _currentTab = 'all';
+
+    function debugLog(msg) {
+      var el = document.getElementById('debug-log');
+      if (el) {
+        var time = new Date().toLocaleTimeString();
+        el.textContent += '[' + time + '] ' + msg + '\n';
+        el.scrollTop = el.scrollHeight;
+      }
+    }
+
+    function debugSample(key, arr) {
+      if (!arr) return;
+      _debugData[key] = {
+        total: arr.length,
+        sample: arr.slice(0, 10)
+      };
+    }
+
+    function copyDebugData() {
+      var t = document.createElement('textarea');
+      t.value = JSON.stringify(_debugData, null, 2);
+      document.body.appendChild(t);
+      t.select();
+      document.execCommand('copy');
+      document.body.removeChild(t);
+      alert('Debug data copied to clipboard! Paste it back to the AI chat for analysis.');
+    }
+
+    // Helper: Check if location is in Colorado
+    function isColoradoLocation(addr, lat, lng) {
+      if (lat && lng && lat !== 0 && lng !== 0) {
+        var inCoBounds = (lat >= 36.99 && lat <= 41.01 && lng >= -109.07 && lng <= -102.03);
+        if (inCoBounds) return true;
+      }
+      if (addr) {
+        var uAddr = addr.toUpperCase();
+        if (uAddr.indexOf(', CO') !== -1 || uAddr.indexOf('COLORADO') !== -1 || uAddr.indexOf(' CO ') !== -1) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    // Helper: Filter out non-trackable, archived, or trailer devices
+    function isEligibleVehicle(d) {
+      if (!d) return false;
+      if (d.activeTo && new Date(d.activeTo) < new Date()) {
+        return false;
+      }
+      if (d.isDeviceNeverConnected) {
+        return false;
+      }
+      var devType = d.deviceType || '';
+      if (devType === 'CustomDevice' || devType === 'Trailer') {
+        return false;
+      }
+      return true;
+    }
+
+    // Initialize Leaflet Map
+    function initMap() {
+      if (_map) return;
+      try {
+        _map = L.map('map').setView([39.0, -105.5], 7);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          attribution: '&copy; OpenStreetMap contributors'
+        }).addTo(_map);
+        _markersGroup = L.layerGroup().addTo(_map);
+      } catch(e) {
+        debugLog('Map init error: ' + e);
+      }
+    }
+
+    function parseDurationToSeconds(duration) {
+      if (!duration) return 0;
+      if (typeof duration === 'number') return duration;
+      if (typeof duration === 'string') {
+        var parts = duration.split(':');
+        if (parts.length === 3) {
+          var hours = 0;
+          var days = 0;
+          if (parts[0].indexOf('.') !== -1) {
+            var dParts = parts[0].split('.');
+            days = parseInt(dParts[0], 10) || 0;
+            hours = parseInt(dParts[1], 10) || 0;
+          } else {
+            hours = parseInt(parts[0], 10) || 0;
+          }
+          var mins = parseInt(parts[1], 10) || 0;
+          var secs = parseFloat(parts[2]) || 0;
+          return (days * 86400) + (hours * 3600) + (mins * 60) + secs;
+        }
+      }
+      return 0;
+    }
+
+    function formatSeconds(secs) {
+      if (!secs || isNaN(secs)) return '00:00:00';
+      var d = Math.floor(secs / 86400);
+      var h = Math.floor((secs % 86400) / 3600);
+      var m = Math.floor((secs % 3600) / 60);
+      var s = Math.floor(secs % 60);
+      var hStr = (h < 10 ? '0' : '') + h;
+      var mStr = (m < 10 ? '0' : '') + m;
+      var sStr = (s < 10 ? '0' : '') + s;
+      if (d > 0) {
+        return d + 'd ' + hStr + 'h ' + mStr + 'm';
+      }
+      return hStr + ':' + mStr + ':' + sStr;
+    }
+
+    function formatDate(dt) {
+      if (!dt) return 'N/A';
+      var d = new Date(dt);
+      if (isNaN(d.getTime())) return String(dt);
+      return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+    }
+
+    // Add-In Lifecycle Callbacks
+    geotab.addin['physical-inventory-domicile'] = function() {
+      return {
+        initialize: function(api, state, callback) {
+          _geotabApi = api;
+          debugLog('Initializing Physical Inventory Domicile Add-In v1.2...');
+          initMap();
+          loadInitialData(callback);
+        },
+        focus: function(api, state) {
+          debugLog('Add-In focused');
+          if (_map) {
+            setTimeout(function() { _map.invalidateSize(); }, 300);
+          }
+        },
+        blur: function(api, state) {
+          debugLog('Add-In blurred');
+        }
+      };
+    };
+
+    function loadInitialData(onComplete) {
+      if (!_geotabApi) {
+        if (onComplete) onComplete();
+        return;
+      }
+
+      _geotabApi.multiCall([
+        ['Get', { typeName: 'Device' }],
+        ['Get', { typeName: 'Group' }]
+      ], function(results) {
+        var rawDevices = results[0] || [];
+        var groups = results[1] || [];
+
+        _allDevices = rawDevices.filter(isEligibleVehicle);
+
+        debugLog('Loaded ' + rawDevices.length + ' raw devices. Filtered to ' + _allDevices.length + ' active vehicles.');
+        debugSample('devices', _allDevices);
+
+        _groupsMap = {};
+        var groupSelect = document.getElementById('select-group');
+        groupSelect.innerHTML = '<option value="ALL">-- All Regional Groups --</option>';
+
+        groups.forEach(function(g) {
+          _groupsMap[g.id] = g.name || g.id;
+          if (g.name && g.id !== 'GroupCompanyId') {
+            var opt = document.createElement('option');
+            opt.value = g.id;
+            opt.textContent = g.name;
+            groupSelect.appendChild(opt);
+          }
+        });
+
+        document.getElementById('kpi-total-vehicles').textContent = _allDevices.length;
+        if (onComplete) onComplete();
+      }, function(err) {
+        debugLog('Error loading initial data: ' + (err.message || err));
+        _debugData.initialError = String(err);
+        if (onComplete) onComplete();
+      });
+    }
+
+    function runReport() {
+      if (!_geotabApi) return;
+
+      var lookbackDays = parseInt(document.getElementById('select-lookback').value, 10) || 90;
+      var selectedGroup = document.getElementById('select-group').value;
+      var stateFilterOption = document.getElementById('select-state-filter').value;
+
+      document.getElementById('warning-banner').style.display = 'none';
+      document.getElementById('loading-indicator').style.display = 'block';
+      document.getElementById('empty-indicator').style.display = 'none';
+      document.getElementById('table-wrapper').style.display = 'none';
+
+      var toDate = new Date();
+      var fromDate = new Date();
+      fromDate.setDate(fromDate.getDate() - lookbackDays);
+
+      var targetDevices = _allDevices.filter(function(d) {
+        if (selectedGroup === 'ALL') return true;
+        if (!d.groups) return false;
+        return d.groups.some(function(g) { return g.id === selectedGroup; });
+      });
+
+      debugLog('Running analysis for ' + targetDevices.length + ' vehicles (State Filter: ' + stateFilterOption + ')...');
+
+      var tripSearch = {
+        fromDate: fromDate.toISOString(),
+        toDate: toDate.toISOString()
+      };
+
+      _geotabApi.call('Get', {
+        typeName: 'Trip',
+        search: tripSearch,
+        resultsLimit: 50000
+      }, function(trips) {
+        debugLog('Fetched ' + trips.length + ' total trips.');
+        debugSample('trips', trips);
+
+        if (trips.length >= 50000) {
+          document.getElementById('warning-banner').style.display = 'block';
+        }
+
+        processTripsData(targetDevices, trips, stateFilterOption);
+
+        document.getElementById('loading-indicator').style.display = 'none';
+        document.getElementById('table-wrapper').style.display = 'block';
+      }, function(err) {
+        debugLog('Error fetching trips: ' + (err.message || err));
+        _debugData.tripsError = String(err);
+        document.getElementById('loading-indicator').style.display = 'none';
+        document.getElementById('empty-indicator').textContent = 'Error loading trip data: ' + (err.message || err);
+        document.getElementById('empty-indicator').style.display = 'block';
+      });
+    }
+
+    function processTripsData(devices, trips, stateFilterOption) {
+      document.getElementById('kpi-trips-count').textContent = trips.length;
+
+      var deviceMap = {};
+      devices.forEach(function(d) {
+        var groupNames = [];
+        if (d.groups) {
+          d.groups.forEach(function(g) {
+            if (_groupsMap[g.id]) groupNames.push(_groupsMap[g.id]);
+          });
+        }
+        deviceMap[d.id] = {
+          device: d,
+          groupName: groupNames.join(', ') || 'Default',
+          trips: [],
+          locations: {},
+          lastTrip: null
+        };
+      });
+
+      var excludedStopsCount = 0;
+
+      trips.forEach(function(t) {
+        if (!t.device || !deviceMap[t.device.id]) return;
+        var devData = deviceMap[t.device.id];
+
+        var lat = t.stopPoint ? t.stopPoint.y : (t.latitude || 0);
+        var lng = t.stopPoint ? t.stopPoint.x : (t.longitude || 0);
+        var addr = t.address || (lat && lng ? (Math.round(lat * 1000)/1000 + ', ' + Math.round(lng * 1000)/1000) : 'Unknown Location');
+
+        if (stateFilterOption === 'CO_ONLY') {
+          if (!isColoradoLocation(addr, lat, lng)) {
+            excludedStopsCount++;
+            return;
+          }
+        }
+
+        devData.trips.push(t);
+
+        if (!devData.lastTrip || new Date(t.stopDateTime) > new Date(devData.lastTrip.stopDateTime)) {
+          devData.lastTrip = t;
+        }
+
+        var locKey = addr.toLowerCase().trim();
+
+        if (!devData.locations[locKey]) {
+          devData.locations[locKey] = {
+            address: addr,
+            lat: lat,
+            lng: lng,
+            stopCount: 0,
+            totalDurationSec: 0,
+            lastStopDate: t.stopDateTime
+          };
+        }
+
+        var loc = devData.locations[locKey];
+        loc.stopCount++;
+        var durationSec = parseDurationToSeconds(t.stopDuration);
+        loc.totalDurationSec += durationSec;
+
+        if (new Date(t.stopDateTime) > new Date(loc.lastStopDate)) {
+          loc.lastStopDate = t.stopDateTime;
+        }
+      });
+
+      document.getElementById('kpi-excluded-count').textContent = excludedStopsCount;
+
+      _reportData = [];
+      var dwellFoundCount = 0;
+
+      Object.keys(deviceMap).forEach(function(devId) {
+        var dData = deviceMap[devId];
+        var locs = dData.locations;
+        var locKeys = Object.keys(locs);
+
+        var lastLoc = { address: 'No stops recorded in boundary', gps: 'N/A', stopDate: 'N/A' };
+        if (dData.lastTrip) {
+          var tLat = dData.lastTrip.stopPoint ? dData.lastTrip.stopPoint.y : 0;
+          var tLng = dData.lastTrip.stopPoint ? dData.lastTrip.stopPoint.x : 0;
+          lastLoc = {
+            address: dData.lastTrip.address || (tLat + ', ' + tLng),
+            gps: tLat && tLng ? (tLat.toFixed(4) + ', ' + tLng.toFixed(4)) : 'N/A',
+            lat: tLat,
+            lng: tLng,
+            stopDate: formatDate(dData.lastTrip.stopDateTime)
+          };
+        }
+
+        var mostFreqLoc = { address: 'N/A', stopCount: 0, totalDurationSec: 0, gps: 'N/A' };
+        var longestDwellLoc = { address: 'N/A', totalDurationSec: 0, stopCount: 0, gps: 'N/A' };
+
+        if (locKeys.length > 0) {
+          dwellFoundCount++;
+
+          var sortedByStops = locKeys.slice().sort(function(a, b) {
+            return locs[b].stopCount - locs[a].stopCount;
+          });
+          var topFreq = locs[sortedByStops[0]];
+          mostFreqLoc = {
+            address: topFreq.address,
+            stopCount: topFreq.stopCount,
+            totalDurationSec: topFreq.totalDurationSec,
+            lat: topFreq.lat,
+            lng: topFreq.lng,
+            gps: topFreq.lat && topFreq.lng ? (topFreq.lat.toFixed(4) + ', ' + topFreq.lng.toFixed(4)) : 'N/A'
+          };
+
+          var sortedByTime = locKeys.slice().sort(function(a, b) {
+            return locs[b].totalDurationSec - locs[a].totalDurationSec;
+          });
+          var topDwell = locs[sortedByTime[0]];
+          longestDwellLoc = {
+            address: topDwell.address,
+            totalDurationSec: topDwell.totalDurationSec,
+            stopCount: topDwell.stopCount,
+            lat: topDwell.lat,
+            lng: topDwell.lng,
+            gps: topDwell.lat && topDwell.lng ? (topDwell.lat.toFixed(4) + ', ' + topDwell.lng.toFixed(4)) : 'N/A'
+          };
+        }
+
+        _reportData.push({
+          device: dData.device,
+          groupName: dData.groupName,
+          totalTrips: dData.trips.length,
+          lastLoc: lastLoc,
+          mostFreqLoc: mostFreqLoc,
+          longestDwellLoc: longestDwellLoc
+        });
+      });
+
+      document.getElementById('kpi-dwell-count').textContent = dwellFoundCount;
+
+      updateMapMarkers();
+      renderTable();
+    }
+
+    function updateMapMarkers() {
+      if (!_map || !_markersGroup) return;
+      _markersGroup.clearLayers();
+
+      var bounds = [];
+      _reportData.forEach(function(row) {
+        var lat = row.longestDwellLoc.lat || row.lastLoc.lat;
+        var lng = row.longestDwellLoc.lng || row.lastLoc.lng;
+
+        if (lat && lng && (lat !== 0 || lng !== 0)) {
+          bounds.push([lat, lng]);
+          var marker = L.marker([lat, lng]);
+          var popupHtml = '<div style="font-family:sans-serif;font-size:12px;">' +
+            '<strong>' + (row.device.name || row.device.id) + '</strong><br>' +
+            '<b>Group:</b> ' + row.groupName + '<br>' +
+            '<b>Domicile Location:</b> ' + row.longestDwellLoc.address + '<br>' +
+            '<b>Dwell Time:</b> ' + formatSeconds(row.longestDwellLoc.totalDurationSec) + ' (' + row.longestDwellLoc.stopCount + ' stops)<br>' +
+            '</div>';
+          marker.bindPopup(popupHtml);
+          _markersGroup.addLayer(marker);
+        }
+      });
+
+      if (bounds.length > 0) {
+        _map.fitBounds(bounds, { padding: [30, 30] });
+      } else {
+        _map.setView([39.0, -105.5], 7);
+      }
+    }
+
+    function createVehicleLink(device) {
+      var a = document.createElement('a');
+      a.textContent = device.name || device.id;
+      a.href = '#';
+      a.style.cssText = 'color:#2563eb;font-weight:600;text-decoration:underline;cursor:pointer;';
+      a.onclick = function(e) {
+        e.preventDefault();
+        window.parent.location.hash = 'device,id:' + device.id;
+      };
+      return a;
+    }
+
+    function switchTab(tab) {
+      _currentTab = tab;
+      var tabs = ['all', 'time', 'stops', 'last'];
+      tabs.forEach(function(t) {
+        var btn = document.getElementById('tab-btn-' + t);
+        if (t === tab) {
+          btn.style.background = '#2563eb';
+          btn.style.color = '#ffffff';
+        } else {
+          btn.style.background = '#f1f5f9';
+          btn.style.color = '#475569';
+        }
+      });
+      renderTable();
+    }
+
+    function renderTable() {
+      var thead = document.getElementById('table-head');
+      var tbody = document.getElementById('table-body');
+      thead.innerHTML = '';
+      tbody.innerHTML = '';
+
+      if (_reportData.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="8" style="padding:20px;text-align:center;color:#94a3b8;">No matching vehicle inventory records found.</td></tr>';
+        return;
+      }
+
+      var trHead = document.createElement('tr');
+
+      if (_currentTab === 'all') {
+        trHead.innerHTML = '<th style="padding:12px;border-bottom:2px solid #e2e8f0;">Vehicle Name</th>' +
+          '<th style="padding:12px;border-bottom:2px solid #e2e8f0;">Group/Region</th>' +
+          '<th style="padding:12px;border-bottom:2px solid #e2e8f0;">(i) Last Recorded Location</th>' +
+          '<th style="padding:12px;border-bottom:2px solid #e2e8f0;">(ii) Most Frequent Location</th>' +
+          '<th style="padding:12px;border-bottom:2px solid #e2e8f0;">(iii) Longest Cumulative Dwell Location</th>';
+        thead.appendChild(trHead);
+
+        _reportData.forEach(function(row) {
+          var tr = document.createElement('tr');
+          tr.style.borderBottom = '1px solid #f1f5f9';
+
+          var tdDev = document.createElement('td');
+          tdDev.style.padding = '12px';
+          tdDev.appendChild(createVehicleLink(row.device));
+          tr.appendChild(tdDev);
+
+          var tdGrp = document.createElement('td');
+          tdGrp.style.padding = '12px';
+          tdGrp.textContent = row.groupName;
+          tr.appendChild(tdGrp);
+
+          var tdLast = document.createElement('td');
+          tdLast.style.padding = '12px';
+          tdLast.innerHTML = '<div>' + row.lastLoc.address + '</div><div style="font-size:11px;color:#64748b;">Date: ' + row.lastLoc.stopDate + '</div>';
+          tr.appendChild(tdLast);
+
+          var tdFreq = document.createElement('td');
+          tdFreq.style.padding = '12px';
+          tdFreq.innerHTML = '<div>' + row.mostFreqLoc.address + '</div><div style="font-size:11px;color:#64748b;">Stops: <b>' + row.mostFreqLoc.stopCount + '</b> | Duration: ' + formatSeconds(row.mostFreqLoc.totalDurationSec) + '</div>';
+          tr.appendChild(tdFreq);
+
+          var tdDwell = document.createElement('td');
+          tdDwell.style.padding = '12px';
+          tdDwell.innerHTML = '<div style="font-weight:600;color:#0f172a;">' + row.longestDwellLoc.address + '</div><div style="font-size:11px;color:#2563eb;">Total Dwell: <b>' + formatSeconds(row.longestDwellLoc.totalDurationSec) + '</b> (' + row.longestDwellLoc.stopCount + ' stops)</div>';
+          tr.appendChild(tdDwell);
+
+          tbody.appendChild(tr);
+        });
+
+      } else if (_currentTab === 'time') {
+        trHead.innerHTML = '<th style="padding:12px;">Vehicle</th>' +
+          '<th style="padding:12px;">Group</th>' +
+          '<th style="padding:12px;">Primary Dwell Location (Address)</th>' +
+          '<th style="padding:12px;">Location (GPS)</th>' +
+          '<th style="padding:12px;">Number of Stops</th>' +
+          '<th style="padding:12px;">Total Dwell Duration</th>';
+        thead.appendChild(trHead);
+
+        _reportData.forEach(function(row) {
+          var tr = document.createElement('tr');
+          tr.style.borderBottom = '1px solid #f1f5f9';
+
+          var tdDev = document.createElement('td');
+          tdDev.style.padding = '12px';
+          tdDev.appendChild(createVehicleLink(row.device));
+          tr.appendChild(tdDev);
+
+          tr.innerHTML += '<td style="padding:12px;">' + row.groupName + '</td>' +
+            '<td style="padding:12px;font-weight:600;">' + row.longestDwellLoc.address + '</td>' +
+            '<td style="padding:12px;color:#64748b;">' + row.longestDwellLoc.gps + '</td>' +
+            '<td style="padding:12px;">' + row.longestDwellLoc.stopCount + '</td>' +
+            '<td style="padding:12px;font-weight:700;color:#2563eb;">' + formatSeconds(row.longestDwellLoc.totalDurationSec) + '</td>';
+
+          tbody.appendChild(tr);
+        });
+
+      } else if (_currentTab === 'stops') {
+        trHead.innerHTML = '<th style="padding:12px;">Vehicle</th>' +
+          '<th style="padding:12px;">Group</th>' +
+          '<th style="padding:12px;">Most Frequent Location (Address)</th>' +
+          '<th style="padding:12px;">Location (GPS)</th>' +
+          '<th style="padding:12px;">Number of Stops</th>' +
+          '<th style="padding:12px;">Total Stop Duration</th>';
+        thead.appendChild(trHead);
+
+        _reportData.forEach(function(row) {
+          var tr = document.createElement('tr');
+          tr.style.borderBottom = '1px solid #f1f5f9';
+
+          var tdDev = document.createElement('td');
+          tdDev.style.padding = '12px';
+          tdDev.appendChild(createVehicleLink(row.device));
+          tr.appendChild(tdDev);
+
+          tr.innerHTML += '<td style="padding:12px;">' + row.groupName + '</td>' +
+            '<td style="padding:12px;font-weight:600;">' + row.mostFreqLoc.address + '</td>' +
+            '<td style="padding:12px;color:#64748b;">' + row.mostFreqLoc.gps + '</td>' +
+            '<td style="padding:12px;font-weight:700;color:#16a34a;">' + row.mostFreqLoc.stopCount + '</td>' +
+            '<td style="padding:12px;">' + formatSeconds(row.mostFreqLoc.totalDurationSec) + '</td>';
+
+          tbody.appendChild(tr);
+        });
+
+      } else if (_currentTab === 'last') {
+        trHead.innerHTML = '<th style="padding:12px;">Vehicle</th>' +
+          '<th style="padding:12px;">Group</th>' +
+          '<th style="padding:12px;">Last Location (Address)</th>' +
+          '<th style="padding:12px;">Location (GPS)</th>' +
+          '<th style="padding:12px;">Last Recorded Stop Time</th>';
+        thead.appendChild(trHead);
+
+        _reportData.forEach(function(row) {
+          var tr = document.createElement('tr');
+          tr.style.borderBottom = '1px solid #f1f5f9';
+
+          var tdDev = document.createElement('td');
+          tdDev.style.padding = '12px';
+          tdDev.appendChild(createVehicleLink(row.device));
+          tr.appendChild(tdDev);
+
+          tr.innerHTML += '<td style="padding:12px;">' + row.groupName + '</td>' +
+            '<td style="padding:12px;">' + row.lastLoc.address + '</td>' +
+            '<td style="padding:12px;color:#64748b;">' + row.lastLoc.gps + '</td>' +
+            '<td style="padding:12px;font-weight:600;">' + row.lastLoc.stopDate + '</td>';
+
+          tbody.appendChild(tr);
+        });
+      }
+    }
+
+    function filterTable() {
+      var query = document.getElementById('input-search').value.toLowerCase();
+      var rows = document.querySelectorAll('#table-body tr');
+      rows.forEach(function(r) {
+        var text = r.textContent.toLowerCase();
+        if (text.indexOf(query) !== -1) {
+          r.style.display = '';
+        } else {
+          r.style.display = 'none';
+        }
+      });
+    }
+
+    function exportToCSV() {
+      if (_reportData.length === 0) {
+        alert('No data available to export. Please run the report first.');
+        return;
+      }
+
+      var csvRows = [];
+      csvRows.push([
+        'Vehicle Name',
+        'Device ID',
+        'Group/Region',
+        'Last Recorded Location',
+        'Last Location GPS',
+        'Last Stop Date',
+        'Most Frequent Location',
+        'Most Frequent GPS',
+        'Most Frequent Stop Count',
+        'Most Frequent Duration',
+        'Longest Dwell Location',
+        'Longest Dwell GPS',
+        'Longest Dwell Stop Count',
+        'Longest Dwell Duration (HH:MM:SS)'
+      ].map(function(c) { return '"' + c + '"'; }).join(','));
+
+      _reportData.forEach(function(r) {
+        var row = [
+          r.device.name || r.device.id,
+          r.device.id,
+          r.groupName,
+          r.lastLoc.address,
+          r.lastLoc.gps,
+          r.lastLoc.stopDate,
+          r.mostFreqLoc.address,
+          r.mostFreqLoc.gps,
+          r.mostFreqLoc.stopCount,
+          formatSeconds(r.mostFreqLoc.totalDurationSec),
+          r.longestDwellLoc.address,
+          r.longestDwellLoc.gps,
+          r.longestDwellLoc.stopCount,
+          formatSeconds(r.longestDwellLoc.totalDurationSec)
+        ].map(function(val) { return '"' + String(val).replace(/"/g, '""') + '"'; });
+
+        csvRows.push(row.join(','));
+      });
+
+      var blob = new Blob([csvRows.join('\n')], { type: 'text/csv;charset=utf-8;' });
+      var url = URL.createObjectURL(blob);
+      var link = document.createElement('a');
+      link.setAttribute('href', url);
+      link.setAttribute('download', 'Physical_Inventory_Domicile_Report_' + new Date().toISOString().slice(0,10) + '.csv');
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
+  </script>
+</body>
+</html>
