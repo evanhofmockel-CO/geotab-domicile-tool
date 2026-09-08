@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Physical Inventory Domicile Report v1.3</title>
+  <title>Physical Inventory Domicile Report</title>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 </head>
 <body style="margin:0;padding:20px;font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;background-color:#f8fafc;color:#1e293b;">
@@ -11,7 +11,7 @@
   <div style="background:linear-gradient(135deg, #1e293b 0%, #0f172a 100%);color:#ffffff;padding:24px;border-radius:12px;margin-bottom:20px;box-shadow:0 4px 6px -1px rgba(0,0,0,0.1);">
     <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:16px;">
       <div>
-        <h1 style="margin:0;font-size:24px;font-weight:700;letter-spacing:-0.025em;color:#ffffff;">Physical Inventory Domicile Tool v1.3</h1>
+        <h1 style="margin:0;font-size:24px;font-weight:700;letter-spacing:-0.025em;color:#ffffff;">Physical Inventory Domicile Tool</h1>
         <p style="margin:6px 0 0 0;font-size:14px;color:#94a3b8;">Fleet Domicile &amp; Dwell Location Analysis for Regional Managers</p>
       </div>
       <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;">
@@ -25,7 +25,7 @@
 
   <!-- API Warning Notification (Hidden by default) -->
   <div id="warning-banner" style="display:none;background-color:#fffbebe6;border:1px solid #f59e0b;border-left:5px solid #d97706;padding:14px 18px;border-radius:8px;margin-bottom:20px;color:#92400e;font-size:13px;">
-    <strong>⚠️ API Data Limit Reached (50,000 Trips Cap):</strong> Your query reached the maximum API response limit. For large fleets (150+ vehicles), please filter by a specific <strong>Vehicle Group / Region</strong> or select a shorter lookback window to prevent trip truncation.
+    <strong>⚠️ API Data Limit Reached (50,000 Trips Cap):</strong> Your query reached the maximum API response limit. For large fleets, please filter by a specific <strong>Vehicle Group / Region</strong> or select a shorter lookback window to prevent trip truncation.
   </div>
 
   <!-- Filter & Controls Toolbar -->
@@ -92,6 +92,10 @@
 
   <!-- Leaflet Domicile Location Map -->
   <div style="background:#ffffff;border-radius:10px;border:1px solid #e2e8f0;padding:16px;margin-bottom:20px;box-shadow:0 1px 3px rgba(0,0,0,0.05);">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+      <span id="map-context-label" style="font-size:13px;font-weight:700;color:#2563eb;">📍 Showing: Primary Dwell Locations (Longest Duration)</span>
+      <span style="font-size:11px;color:#64748b;">Markers update based on selected tab below</span>
+    </div>
     <div id="map" style="height:380px;width:100%;border-radius:8px;border:1px solid #cbd5e1;background:#e2e8f0;"></div>
   </div>
 
@@ -200,13 +204,14 @@
 
     // Helper: Check if location is in Colorado
     function isColoradoLocation(addr, lat, lng) {
-      if (lat && lng && lat !== 0 && lng !== 0) {
-        var inCoBounds = (lat >= 36.99 && lat <= 41.01 && lng >= -109.07 && lng <= -102.03);
-        if (inCoBounds) return true;
+      // 1. If valid GPS coordinates are present, coordinate bounds are definitive
+      if (lat !== undefined && lat !== null && lng !== undefined && lng !== null && lat !== 0 && lng !== 0) {
+        return (lat >= 36.99 && lat <= 41.01 && lng >= -109.07 && lng <= -102.03);
       }
+      // 2. Fallback to address parsing only if coordinates are missing
       if (addr) {
         var uAddr = addr.toUpperCase();
-        if (uAddr.indexOf(', CO') !== -1 || uAddr.indexOf('COLORADO') !== -1 || uAddr.indexOf(' CO ') !== -1) {
+        if (uAddr.indexOf(', CO') !== -1 || uAddr.indexOf('COLORADO') !== -1) {
           return true;
         }
       }
@@ -261,6 +266,10 @@
           var mins = parseInt(parts[1], 10) || 0;
           var secs = parseFloat(parts[2]) || 0;
           return (days * 86400) + (hours * 3600) + (mins * 60) + secs;
+        } else if (parts.length === 2) {
+          var m = parseInt(parts[0], 10) || 0;
+          var s = parseFloat(parts[1]) || 0;
+          return (m * 60) + s;
         }
       }
       return 0;
@@ -293,7 +302,7 @@
       return {
         initialize: function(api, state, callback) {
           _geotabApi = api;
-          debugLog('Initializing Physical Inventory Domicile Add-In v1.3...');
+          debugLog('Initializing Physical Inventory Domicile Add-In v1.5...');
           initMap();
           loadInitialData(callback);
         },
@@ -396,10 +405,17 @@
 
       debugLog('Running analysis for ' + targetDevices.length + ' vehicles (State Filter: ' + stateFilterOption + ')...');
 
+      // Server-side Device/Group filtering optimization
       var tripSearch = {
         fromDate: fromDate.toISOString(),
         toDate: toDate.toISOString()
       };
+
+      if (selectedGroup !== 'ALL') {
+        tripSearch.deviceSearch = {
+          groups: [{ id: selectedGroup }]
+        };
+      }
 
       _geotabApi.call('Get', {
         typeName: 'Trip',
@@ -570,20 +586,44 @@
       if (!_map || !_markersGroup) return;
       _markersGroup.clearLayers();
 
+      var contextLabel = document.getElementById('map-context-label');
       var bounds = [];
+
       _reportData.forEach(function(row) {
-        var lat = row.longestDwellLoc.lat || row.lastLoc.lat;
-        var lng = row.longestDwellLoc.lng || row.lastLoc.lng;
+        var targetLoc = null;
+        var detailText = '';
+        var metricTitle = '';
+
+        if (_currentTab === 'all' || _currentTab === 'time') {
+          targetLoc = row.longestDwellLoc;
+          metricTitle = 'Primary Dwell Location';
+          detailText = '<b>Dwell Duration:</b> ' + formatSeconds(targetLoc.totalDurationSec) + ' (' + targetLoc.stopCount + ' stops)';
+          if (contextLabel) contextLabel.textContent = '📍 Showing: Primary Dwell Locations (Longest Duration)';
+        } else if (_currentTab === 'stops') {
+          targetLoc = row.mostFreqLoc;
+          metricTitle = 'Most Frequent Location';
+          detailText = '<b>Stops Count:</b> ' + targetLoc.stopCount + ' stops (' + formatSeconds(targetLoc.totalDurationSec) + ' total)';
+          if (contextLabel) contextLabel.textContent = '📍 Showing: Most Frequent Stop Locations';
+        } else if (_currentTab === 'last') {
+          targetLoc = row.lastLoc;
+          metricTitle = 'Last Recorded Location';
+          detailText = '<b>Last Recorded Date:</b> ' + targetLoc.stopDate;
+          if (contextLabel) contextLabel.textContent = '📍 Showing: Last Recorded Stop Locations';
+        }
+
+        var lat = targetLoc ? targetLoc.lat : 0;
+        var lng = targetLoc ? targetLoc.lng : 0;
 
         if (lat && lng && (lat !== 0 || lng !== 0)) {
           bounds.push([lat, lng]);
           var marker = L.marker([lat, lng]);
           var popupHtml = '<div style="font-family:sans-serif;font-size:12px;">' +
-            '<strong>' + (row.device.name || row.device.id) + '</strong><br>' +
+            '<strong style="font-size:13px;color:#0f172a;">' + ((row.device && row.device.name) ? row.device.name : ((row.device && row.device.id) ? row.device.id : 'Unknown')) + '</strong><br>' +
             '<b>Group:</b> ' + row.groupName + '<br>' +
-            '<b>Domicile Location:</b> ' + row.longestDwellLoc.address + '<br>' +
-            '<b>Dwell Time:</b> ' + formatSeconds(row.longestDwellLoc.totalDurationSec) + ' (' + row.longestDwellLoc.stopCount + ' stops)<br>' +
-            '</div>';
+            '<div style="margin-top:4px;padding-top:4px;border-top:1px solid #e2e8f0;">' +
+            '<b>' + metricTitle + ':</b><br>' + targetLoc.address + '<br>' +
+            detailText +
+            '</div></div>';
           marker.bindPopup(popupHtml);
           _markersGroup.addLayer(marker);
         }
@@ -598,12 +638,14 @@
 
     function createVehicleLink(device) {
       var a = document.createElement('a');
-      a.textContent = device.name || device.id;
+      a.textContent = (device && device.name) ? device.name : (device ? device.id : 'Unknown Vehicle');
       a.href = '#';
       a.style.cssText = 'color:#2563eb;font-weight:600;text-decoration:underline;cursor:pointer;';
       a.onclick = function(e) {
         e.preventDefault();
-        window.parent.location.hash = 'device,id:' + device.id;
+        if (device && device.id) {
+          window.parent.location.hash = 'device,id:' + device.id;
+        }
       };
       return a;
     }
@@ -621,6 +663,7 @@
           btn.style.color = '#475569';
         }
       });
+      updateMapMarkers();
       renderTable();
     }
 
@@ -756,10 +799,13 @@
           tbody.appendChild(tr);
         });
       }
+
+      filterTable();
     }
 
     function filterTable() {
-      var query = document.getElementById('input-search').value.toLowerCase();
+      var searchInput = document.getElementById('input-search');
+      var query = searchInput ? searchInput.value.toLowerCase() : '';
       var rows = document.querySelectorAll('#table-body tr');
       rows.forEach(function(r) {
         var text = r.textContent.toLowerCase();
@@ -797,19 +843,19 @@
 
       _reportData.forEach(function(r) {
         var row = [
-          r.device.name || r.device.id,
-          r.device.id,
-          r.groupName,
-          r.lastLoc.address,
-          r.lastLoc.gps,
-          r.lastLoc.stopDate,
-          r.mostFreqLoc.address,
-          r.mostFreqLoc.gps,
-          r.mostFreqLoc.stopCount,
+          (r.device && r.device.name) ? r.device.name : ((r.device && r.device.id) ? r.device.id : ''),
+          (r.device && r.device.id) ? r.device.id : '',
+          r.groupName || '',
+          r.lastLoc.address || '',
+          r.lastLoc.gps || '',
+          r.lastLoc.stopDate || '',
+          r.mostFreqLoc.address || '',
+          r.mostFreqLoc.gps || '',
+          r.mostFreqLoc.stopCount || 0,
           formatSeconds(r.mostFreqLoc.totalDurationSec),
-          r.longestDwellLoc.address,
-          r.longestDwellLoc.gps,
-          r.longestDwellLoc.stopCount,
+          r.longestDwellLoc.address || '',
+          r.longestDwellLoc.gps || '',
+          r.longestDwellLoc.stopCount || 0,
           formatSeconds(r.longestDwellLoc.totalDurationSec)
         ].map(function(val) { return '"' + String(val).replace(/"/g, '""') + '"'; });
 
